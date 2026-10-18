@@ -72,12 +72,13 @@
 - 만든 것: `hw/qvenc.c` rev 1.1, `tests/dma_probe.py`, `tests/qtest_probe.py`,
   `tests/host/`(호스트 단위 테스트), `scripts/test.sh`, `apply_qemu.sh` 마커 기반 패치,
   `run.sh`에 DMA 검증용 예약 영역과 `latency-ms` 추가
-- 검증: **QEMU 11.1.2를 실제로 빌드해 `-device qvenc` 등록 확인**,
-  `tests/qtest_probe.py`로 실제 QEMU 안에서 55/55 통과 (PCI 열거, BAR 배치, 레지스터,
-  접근 규칙 위반, bus master, 실제 DMA 6 KiB·384 KiB, RAM 밖 DMA, BUSY, 래칭,
-  RESET, MSI capability, guest-error 로그).
-  호스트 스텁 harness 89개 검사, `mmio_probe.py` 64/64, `dma_probe.py` 41/41도 통과.
-  게스트 부팅 검증은 buildroot 빌드 후
+- 검증: **3층 전부 통과, 총 249개 검사.** 1~3단계가 실측으로 확인됐다
+  - 1층 `tests/host` 89/89 — 레지스터 상태 기계, INTx 토글 횟수
+  - 2층 `tests/qtest_probe.py` 55/55 — 실제 QEMU 11.1.2. PCI 열거, BAR 크기 실측,
+    실제 DMA(6 KiB·384 KiB), RAM 밖 DMA, MSI capability, guest-error 로그
+  - 3층 **게스트 부팅 확인** (커널 6.18.7): `lspci`에 `1234:5100` class `0400`,
+    9p `/mnt/qvenc` 자동 마운트, `/proc/iomem`에 `40000000-40ffffff : Reserved`,
+    `mmio_probe.py` 64/64, `dma_probe.py` 41/41
 - JPEG 인코딩은 아직 없다. rev 1.1의 `START`는 입력을 그대로 복사한다
 - 다음 할 일: (SW팀) 드라이버 probe → DMA 버퍼 → 인터럽트 핸들러 /
   (HW팀) 4단계 JPEG 코어 — 사용자 지시 대기

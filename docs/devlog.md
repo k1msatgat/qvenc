@@ -250,3 +250,54 @@ CLAUDE.md "현재 상태"는 요약만 담는다. 날짜별 상세 작업 기록
 ### 남은 것
 - buildroot 게스트 빌드 진행 중(크로스 툴체인 단계). 끝나면 3층 검증
 
+## 2026-10-18 — 게스트 부팅 검증 (3층 완료)
+
+buildroot 게스트 빌드가 끝나 실제로 부팅해서 검증했다. **1~3단계가 전부 실측 확인됐다.**
+
+### 게스트 빌드 결과
+- 커널 6.18.7, `bzImage` 6.4 MiB, `rootfs.ext2` 512 MiB
+- fragment 에 넣은 타깃 패키지가 전부 들어갔다: `pciutils`, `busybox`, `python3`, `libffi`
+
+### 고친 것 — 커널 트리 탐지 버그
+`build_guest.sh` 가 SW팀에 알려주는 `KDIR` 이 **틀렸다.** `output/build/linux-*` 를
+글롭해서 `tail -1` 을 썼는데, 사전순으로 `linux-headers-6.18.7` 이 `linux-6.18.7` 보다
+뒤라서 헤더 패키지를 집었다. 거기에는 `.config` 도 `Module.symvers` 도 없어서
+out-of-tree 모듈을 빌드할 수 없다.
+
+`.config` 와 `Module.symvers` 가 둘 다 있는 디렉터리만 고르도록 고쳤다.
+이제 `KDIR=.../output/build/linux-6.18.7` 이 나온다.
+
+### 게스트에서 확인한 것
+```
+# uname -r
+6.18.7
+# lspci -nn | grep -i 5100
+00:04.0 Multimedia video controller [0400]: Device [1234:5100] (rev 01)
+# cat /sys/bus/pci/devices/0000:00:04.0/class
+0x040000
+# grep -i reserved /proc/iomem
+40000000-40ffffff : Reserved          <- memmap= 예약이 의도대로 잡혔다
+# ls /mnt/qvenc                        <- 9p 자동 마운트 동작
+README.md build core docs driver hw include ...
+```
+
+- `python3` 에서 `ctypes` 와 `mmap` 둘 다 쓸 수 있다 (`libffi` 를 넣은 게 맞았다)
+- `tests/mmio_probe.py` → **64/64 PASS**
+- `tests/dma_probe.py` → **41/41 PASS**
+- README 에 적어 둔 기대 출력이 실제 출력과 정확히 일치한다
+
+### 검증 총계
+| 층 | 도구 | 결과 |
+|---|---|---|
+| 1 | `tests/host` | 89/89 |
+| 2 | `tests/qtest_probe.py` | 55/55 |
+| 3 | `tests/mmio_probe.py` (게스트) | 64/64 |
+| 3 | `tests/dma_probe.py` (게스트) | 41/41 |
+| | **합계** | **249/249** |
+
+### 나중에 볼 것
+- buildroot 가 `host-qemu` 를 따로 빌드한다 (`qemu_x86_64_defconfig` 가 끌고 온다).
+  우리는 `build/qemu` 의 qvenc 가 들어간 QEMU 를 쓰므로 쓸모없는 중복이고 빌드 시간을
+  꽤 먹는다. 다만 `board/qemu/post-image.sh` 가 거기 의존할 수 있어, 끄려면 검증이
+  필요하다. 지금 건드리면 전체 재빌드라 미뤄 둔다
+

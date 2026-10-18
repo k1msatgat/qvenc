@@ -115,9 +115,23 @@ make -C "$BR_SRC"
 say "완료:"
 ls -lh "$BR_IMAGES/bzImage" "$BR_IMAGES/rootfs.ext2"
 
-kdir="$(echo $BR_KDIR_GLOB | tr ' ' '\n' | tail -1)"
-if [ -d "$kdir" ]; then
+# out-of-tree 모듈을 빌드하려면 "설정되고 빌드까지 끝난" 커널 트리가 필요하다.
+# output/build 에는 linux-<ver> 과 linux-headers-<ver> 이 둘 다 있는데, 후자는
+# 헤더만 있는 패키지라 모듈을 빌드할 수 없다. .config 와 Module.symvers 가
+# 있는 쪽만 고른다.
+kdir=""
+for d in $BR_KDIR_GLOB; do
+    [ -d "$d" ] || continue
+    case "$(basename "$d")" in linux-headers-*) continue ;; esac
+    if [ -f "$d/.config" ] && [ -f "$d/Module.symvers" ]; then
+        kdir="$d"
+    fi
+done
+
+if [ -n "$kdir" ]; then
     say "드라이버 out-of-tree 빌드용 커널 트리 (SW팀용):"
     echo "    KDIR=$kdir"
     echo "    CROSS_COMPILE=$BR_SRC/output/host/bin/x86_64-buildroot-linux-gnu-"
+else
+    warn "모듈 빌드가 가능한 커널 트리를 못 찾았다 ($BR_KDIR_GLOB)"
 fi
