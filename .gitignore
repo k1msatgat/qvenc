@@ -1,0 +1,34 @@
+# 빌드 산출물 (CLAUDE.md "진행 방식": 커밋하지 않는다)
+build/
+output/
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+*.a
+*.so
+*.out
+
+# 인코딩 결과물 / 테스트 산출물
+*.jpg
+*.jpeg
+*.yuv
+*.bin
+tests/out/
+
+# 에디터 / OS
+*.swp
+*~
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+*.pyc
+
+# OMC 운영 아티팩트 (.omc/skills 는 예외적으로 커밋 가능)
+.omc/
+!.omc/skills/

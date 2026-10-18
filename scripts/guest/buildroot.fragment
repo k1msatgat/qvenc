@@ -1,0 +1,16 @@
+# qvenc 게스트 buildroot 설정 추가분.
+# @QVENC_ROOT@ 는 scripts/build_guest.sh 가 절대 경로로 치환한다.
+
+# HW 검증 도구용
+BR2_PACKAGE_PCIUTILS=y
+BR2_PACKAGE_PYTHON3=y
+BR2_PACKAGE_LIBFFI=y
+
+# rootfs 에 python3 이 들어가므로 기본 크기로는 모자란다
+BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+
+# 커널 설정 추가분
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="@QVENC_ROOT@/scripts/guest/linux.fragment"
+
+# 부팅 시 9p 자동 마운트 스크립트
+BR2_ROOTFS_OVERLAY="@QVENC_ROOT@/scripts/guest/overlay"

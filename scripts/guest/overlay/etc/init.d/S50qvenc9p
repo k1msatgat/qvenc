@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# 호스트의 qvenc 저장소를 /mnt/qvenc 에 마운트한다.
+# mount tag 는 scripts/run.sh 의 -virtfs mount_tag 와 같아야 한다.
+
+MOUNT_TAG=qvenc
+MOUNT_POINT=/mnt/qvenc
+
+start() {
+    printf 'Mounting 9p share "%s" on %s: ' "$MOUNT_TAG" "$MOUNT_POINT"
+    mkdir -p "$MOUNT_POINT"
+    if mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 \
+             "$MOUNT_TAG" "$MOUNT_POINT" 2>/dev/null; then
+        echo OK
+    else
+        echo "skipped (9p share not present)"
+    fi
+}
+
+stop() {
+    umount "$MOUNT_POINT" 2>/dev/null
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart|reload) stop; start ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

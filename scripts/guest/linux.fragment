@@ -1,0 +1,24 @@
+# qvenc 게스트 커널 설정 추가분.
+# buildroot 의 qemu_x86_64 기본 커널 설정 위에 머지된다.
+
+# 드라이버를 out-of-tree 모듈로 올리기 위해
+CONFIG_MODULES=y
+CONFIG_MODULE_UNLOAD=y
+
+# PCI + MSI (3단계 인터럽트)
+CONFIG_PCI=y
+CONFIG_PCI_MSI=y
+
+# 호스트 저장소 공유 (9p over virtio)
+CONFIG_NET_9P=y
+CONFIG_NET_9P_VIRTIO=y
+CONFIG_9P_FS=y
+CONFIG_9P_FS_POSIX_ACL=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+
+# /dev/mem 으로 직접 레지스터를 두드릴 수 있게 (디버깅용)
+CONFIG_DEVMEM=y
+# CONFIG_STRICT_DEVMEM is not set
+# CONFIG_IO_STRICT_DEVMEM is not set
