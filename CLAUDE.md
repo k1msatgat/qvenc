@@ -63,11 +63,18 @@
 8. (선택) 장치 안에 펌웨어 역할의 명령 큐 처리부 추가 — 호스트 → 칩 내 펌웨어 → IP 2계층 구조
 
 ## 현재 상태
-- 단계: 1 완료 (환경) / 태그 `v1-env`
-- 만든 것: 저장소 골격, `.gitignore`, README, `docs/devlog.md`,
-  `scripts/{common,build_qemu,build_guest,run}.sh`, 게스트 설정 조각과 9p 오버레이
-- 검증: 스크립트 문법 검사만 통과. 실제 QEMU/buildroot 빌드는 사용자 실행 대기
-- 다음 할 일: 2단계 (장치 골격)
+- 단계: 2 완료 (장치 골격) / 태그 `v2-skeleton`. 1단계는 `v1-env`
+- regspec rev 1.0 발행. 레지스터 14개(ID, CTRL, STATUS, IRQ_ACK, ERR_CODE,
+  SRC_LO/HI, DST_LO/HI, DST_SIZE, OUT_LEN, WIDTH, HEIGHT, QUALITY),
+  에러 코드 0x00~0x09 및 0x7F. 상세는 docs/regspec.md Change log 참조
+- 만든 것: `docs/regspec.md`, `include/qvenc_regs.h`, `hw/qvenc.c`(BAR0 MMIO만),
+  `scripts/apply_qemu.sh`, `tests/mmio_probe.py`
+- 검증: 호스트에서 QEMU 헤더를 스텁으로 두고 `hw/qvenc.c`의 레지스터 로직을
+  컴파일·실행해 81개 검사 전부 통과(경고 없음). `qvenc_regs.h`는 static_assert 통과.
+  `mmio_probe.py`도 같은 장치 로직에 ctypes로 연결해 끝까지 돌려 60/60 PASS.
+  게스트 부팅과 게스트 안에서의 `mmio_probe.py` 실행은 사용자 실행 대기
+- DMA·IRQ·인코딩은 아직 없다. `CTRL.START`는 의도적으로 `ERR_UNIMPL`을 보고한다
+- 다음 할 일: (SW팀) 드라이버 probe / (HW팀) 3단계 DMA와 IRQ — 사용자 지시 대기
 
 ## 결정 기록
 - 2026-10-18: 코덱은 JPEG baseline. H.264는 범위가 커서 제외
@@ -77,6 +84,15 @@
 - 2026-10-18: 모든 빌드 산출물은 `build/` 아래로 모은다 (`QVENC_BUILD`로 변경 가능)
 - 2026-10-18: 9p 마운트는 게스트 `/etc/init.d/S50qvenc9p` 오버레이로 자동화.
   run.sh의 `mount_tag=qvenc`와 짝을 이룬다
+- 2026-10-18: `MemoryRegionOps.valid`를 1바이트·비정렬까지 열었다. QEMU가 먼저
+  걸러 버리면 장치가 `ERR_ALIGN`으로 보고할 기회가 없어 "조용한 무시"가 되기 때문
+- 2026-10-18: WIDTH/HEIGHT/QUALITY는 쓰기 시점에 검사하지 않고 `START` 시점에
+  한 번 검사한다. 조용히 클램프하면 SW가 자기 실수를 알 수 없다
+- 2026-10-18: `ERR_CODE`는 first error wins. 처음 원인을 ack 전까지 보존한다
+- 2026-10-18: rev 1.0의 `CTRL.START`는 `ERR_UNIMPL`(0x7F). 없는 기능을 성공한 척하지 않는다
+- 2026-10-18: `RESET`과 `START`가 동시에 오면 `RESET`이 이긴다
+- 2026-10-18: 장치 식별 상수는 `qvenc_regs.h` 하나만 쓴다. QEMU 장치, 드라이버,
+  `mmio_probe.py`가 모두 이 헤더를 참조한다 (probe는 헤더를 파싱해서 쓴다)
 
 ## 주의사항
 - QEMU 빌드에는 glib/pixman 개발 패키지가 필요하다. 없으면 configure가 실패하므로
@@ -84,3 +100,8 @@
 - buildroot 최상위 `make`에는 `-j`를 붙이지 않는다. 병렬화는 `BR2_JLEVEL`이 처리한다
 - 9p `security_model=mapped-xattr`는 xattr를 지원하는 파일시스템이 필요하다.
   저장소가 `/mnt/c` 같은 DrvFs 위에 있으면 `QVENC_9P_SECURITY=none`으로 띄운다
+- 드라이버가 붙지 않은 PCI 장치는 메모리 디코딩이 꺼져 있을 수 있다. 그러면 MMIO가
+  전부 `0xffffffff`로 보인다. `mmio_probe.py`는 sysfs `enable`과 COMMAND 레지스터로
+  이를 직접 켠다
+- MMIO는 ctypes로 접근한다. `mmap` 슬라이싱은 memcpy를 타서 바이트 단위로 쪼개질 수
+  있고, 그러면 장치가 `ERR_ALIGN`을 올린다
