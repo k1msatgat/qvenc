@@ -214,3 +214,39 @@ CLAUDE.md "현재 상태"는 요약만 담는다. 날짜별 상세 작업 기록
 - buildroot 게스트 빌드 진행 중. 끝나면 부팅 → `mmio_probe.py` → `dma_probe.py`로
   게스트 환경(sysfs, `/dev/mem`, 9p)까지 확인한다
 
+## 2026-10-18 — 검증 체계 정리 (테스트에서 나온 개선)
+
+실제 빌드·테스트를 거치며 드러난 것들을 정리했다.
+
+### 만든 것
+- `tests/host/` — 장치 로직 호스트 단위 테스트를 저장소에 넣었다. 그동안 임시로만
+  쓰던 것이다. `hw/qvenc.c`를 가짜 QEMU 헤더(`stub/`)와 함께 호스트 프로그램으로
+  컴파일해 돌린다. 89개 검사, 1초, QEMU 불필요.
+  `stub/hw/misc/qvenc_regs.h`는 사본이 아니라 진짜 계약 헤더를 가리킨다
+- `scripts/test.sh` — 호스트에서 돌릴 수 있는 검증(①②층)을 한 번에 돌린다
+
+### 고친 것
+- `build_qemu.sh` 사전 점검 강화. 이전에는 `python3-venv`가 없으면 configure 가
+  `python venv creation failed`로 죽어서 원인을 알기 어려웠다. 이제 clone 전에
+  `ensurepip`, `glib-2.0`, `pixman-1`을 직접 확인하고 없는 것을 이름으로 짚어 준다
+- `build_qemu.sh`에 `--disable-tools` 추가. qemu-img/nbd/io 는 이 프로젝트에서
+  안 쓴다 (`run.sh`가 rootfs.ext2 를 raw 로 바로 붙인다). 빌드가 빨라지고
+  의존 패키지도 준다. 실제로 이 세션에서 빌드가 멈춘 지점이 qemu-nbd 링크였다
+
+### 검증 체계
+| 층 | 명령 | 필요한 것 | 시간 | 잡는 것 |
+|---|---|---|---|---|
+| 1 | `make -C tests/host check` | 없음 | 1초 | 레지스터 상태 기계, IRQ 라인 토글 횟수 |
+| 2 | `python3 tests/qtest_probe.py` | QEMU | 몇 초 | PCI 열거, MMIO, 실제 DMA, MSI |
+| 3 | 게스트 안의 probe 두 개 | QEMU+게스트 | 부팅 | sysfs, /dev/mem, 9p, 커널 경로 |
+
+층을 나눈 이유는 실제로 **층마다 다른 것을 잡았기 때문**이다.
+1층은 상태 기계(와 스텁 자체의 결함), 2층은 QEMU 11의 API 변경과 접근 폭·DMA 범위의
+실제 동작, 그리고 게스트 빌드가 WSL2의 PATH 문제를 잡았다. ctypes 로 장치 로직에
+프로브를 물려 돌린 중간 단계에서는 `mmio_probe.py` 자체의 버그를 잡았다.
+
+현재 `./scripts/test.sh` = 89 + 55 = **144개 검사 전부 통과**.
+
+### 남은 것
+- buildroot 게스트 빌드 진행 중(크로스 툴체인 단계). 끝나면 3층 검증
+

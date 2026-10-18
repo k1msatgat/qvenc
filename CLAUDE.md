@@ -69,7 +69,8 @@
   `CTRL.START`가 실제로 SRC→DST DMA를 수행, `STATUS.BUSY` 실동작, MSI+INTx 인터럽트,
   입력 포맷 I420 확정, `WIDTH`/`HEIGHT` 정렬 8→**16**, `ERR_NO_BUS_MASTER`(0x0A) 신설.
   상세는 docs/regspec.md Change log 참조
-- 만든 것: `hw/qvenc.c` rev 1.1, `tests/dma_probe.py`(신규), `apply_qemu.sh` 마커 기반 패치,
+- 만든 것: `hw/qvenc.c` rev 1.1, `tests/dma_probe.py`, `tests/qtest_probe.py`,
+  `tests/host/`(호스트 단위 테스트), `scripts/test.sh`, `apply_qemu.sh` 마커 기반 패치,
   `run.sh`에 DMA 검증용 예약 영역과 `latency-ms` 추가
 - 검증: **QEMU 11.1.2를 실제로 빌드해 `-device qvenc` 등록 확인**,
   `tests/qtest_probe.py`로 실제 QEMU 안에서 55/55 통과 (PCI 열거, BAR 배치, 레지스터,
@@ -110,6 +111,11 @@
   검증 도구는 Python 3, 빌드는 Bash + Meson/Kconfig/Kbuild
 - 2026-10-18: DMA 검증은 드라이버 없이 한다. `memmap=`으로 물리 메모리를 예약하고
   `/dev/mem`으로 매핑하는, 실제 칩 bring-up과 같은 방식
+- 2026-10-18: 검증을 세 층으로 나눈다 — ① `tests/host`(스텁, QEMU 불필요, 1초)
+  ② `tests/qtest_probe.py`(실제 QEMU, 게스트 불필요) ③ 게스트 안의 probe 두 개.
+  층마다 잡는 게 달라서 한 층만으로는 부족하다. `scripts/test.sh`가 ①②를 묶어 돌린다
+- 2026-10-18: `build_qemu.sh`는 `--disable-tools`로 qemu-img/nbd/io를 빼고 빌드한다.
+  `run.sh`가 rootfs.ext2를 raw로 바로 붙여서 이미지 변환 도구가 필요 없다
 
 ## 주의사항
 - QEMU 빌드에는 glib/pixman 개발 패키지가 필요하다. 없으면 configure가 실패하므로

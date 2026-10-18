@@ -32,3 +32,6 @@ __pycache__/
 # OMC 운영 아티팩트 (.omc/skills 는 예외적으로 커밋 가능)
 .omc/
 !.omc/skills/
+
+# 호스트 단위 테스트 산출물
+tests/host/test_qvenc

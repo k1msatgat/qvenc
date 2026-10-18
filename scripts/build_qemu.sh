@@ -36,12 +36,20 @@ fi
 need git
 need python3
 
+# configure 가 중간에 알아보기 어려운 메시지로 죽는 것보다, 여기서 먼저 걸러 준다.
 missing=()
 for c in ninja pkg-config flex bison; do
-    command -v "$c" >/dev/null 2>&1 || missing+=("$c")
+    command -v "$c" >/dev/null 2>&1 || missing+=("$c (명령)")
+done
+# QEMU configure 는 python venv 를 만들고 그 안에서 ensurepip 를 쓴다.
+# 데비안/우분투는 ensurepip 를 python3-venv 로 따로 뺐다.
+python3 -c 'import ensurepip' >/dev/null 2>&1 || missing+=("python3-venv (ensurepip)")
+for lib in glib-2.0 pixman-1; do
+    pkg-config --exists "$lib" 2>/dev/null || missing+=("$lib (개발 헤더)")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
-    warn "없는 명령: ${missing[*]}"
+    warn "빌드에 필요한 것이 없다:"
+    for m in "${missing[@]}"; do warn "  - $m"; done
     die "먼저 'scripts/build_qemu.sh --deps' 를 실행하거나 직접 설치:
   sudo apt-get install -y ${APT_PKGS[*]}"
 fi
@@ -81,9 +89,13 @@ if [ ! -f "$QEMU_BUILDDIR/build.ninja" ]; then
     mkdir -p "$QEMU_BUILDDIR"
     (
         cd "$QEMU_BUILDDIR"
+        # --disable-tools: qemu-img/qemu-nbd/qemu-io 는 이 프로젝트에서 안 쓴다.
+        # run.sh 가 rootfs.ext2 를 raw 로 바로 붙이므로 이미지 변환이 필요 없다.
+        # 빼면 빌드가 빨라지고 의존 패키지도 줄어든다.
         ../configure \
             --target-list=x86_64-softmmu \
             --enable-virtfs \
+            --disable-tools \
             --disable-docs \
             --disable-gtk \
             --disable-sdl \
