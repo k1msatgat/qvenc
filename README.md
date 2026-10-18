@@ -60,12 +60,23 @@ Change log에 ECO 공지처럼 남는다.
 
 ```sh
 lspci -nn | grep 1234:5100
-python3 /mnt/qvenc/tests/mmio_probe.py
+python3 /mnt/qvenc/tests/mmio_probe.py     # 레지스터 규칙
+python3 /mnt/qvenc/tests/dma_probe.py      # DMA 와 인터럽트 상태 비트
 ```
 
-`mmio_probe.py`는 드라이버 없이 sysfs의 `resource0`를 mmap해서 레지스터가
-`docs/regspec.md`대로 동작하는지 확인하는 HW 검증 도구다. 상수는 `qvenc_regs.h`에서
-직접 읽으므로 테스트가 계약에서 따로 놀 수 없다.
+둘 다 드라이버 없이 도는 HW 검증 도구다. 상수는 `qvenc_regs.h`에서 직접 읽으므로
+테스트가 계약에서 따로 놀 수 없다.
+
+- `mmio_probe.py` — sysfs의 `resource0`를 mmap해서 레지스터가 `docs/regspec.md`대로
+  동작하는지 본다
+- `dma_probe.py` — `run.sh`가 `memmap=`으로 예약해 둔 물리 메모리를 `/dev/mem`으로
+  매핑해 DMA 버퍼로 쓴다. 실제 칩 bring-up에서 드라이버보다 먼저 하는 일과 같다
+
+처리 지연을 바꿔서 `BUSY` 경로를 길게 보고 싶으면:
+
+```sh
+QVENC_LATENCY_MS=200 ./scripts/run.sh
+```
 
 ## 장치 소스를 고쳤을 때
 

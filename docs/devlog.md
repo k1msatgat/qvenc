@@ -84,3 +84,69 @@ CLAUDE.md "현재 상태"는 요약만 담는다. 날짜별 상세 작업 기록
 - 3단계에서 `qvenc_start()`가 DMA + 타이머로, `qvenc_update_irq()`가
   `pci_set_irq()`/`msi_notify()` 호출로 바뀐다. 그때 regspec Change log에 ECO를 남긴다
 
+## 2026-10-18 — 3단계: DMA와 IRQ (HW팀 몫)
+
+### 계약 변경 (regspec rev 1.0 → rev 1.1)
+`docs/regspec.md` Change log에 ECO로 남겼다. 요약:
+
+- `ID` `0x51000100` → `0x51000101` (VER_MINOR 증가, 레지스터 맵은 그대로)
+- `CTRL.START`가 실동작. rev 1.1의 동작은 **SRC→DST 단순 복사**
+- `STATUS.BUSY` 실동작, 인터럽트 실제 발생 (MSI 1벡터 + INTx 레벨)
+- 입력 포맷 **I420 (YUV 4:2:0 planar)**, 길이 `W*H*3/2` (3.7절 신설)
+- `WIDTH`/`HEIGHT` 정렬 **8 → 16의 배수** (4:2:0 MCU가 16×16)
+- `ERR_NO_BUS_MASTER`(0x0A) 신설
+- 장치 속성 `latency-ms` 신설 (기본 10)
+
+### 만든 것
+- `hw/qvenc.c` rev 1.1 — DMA(64 KiB 청크 분할), 지연 타이머, MSI/INTx, 버스 리셋 훅
+- `tests/dma_probe.py` — 드라이버 없이 DMA를 검증한다. `memmap=`으로 예약한 물리
+  메모리를 `/dev/mem`으로 매핑해 DMA 버퍼로 쓰는, 실제 bring-up과 같은 방식
+- `scripts/apply_qemu.sh` — 마커(`# BEGIN qvenc` ~ `# END qvenc`) 기반 치환으로 변경.
+  이전 방식은 블록이 이미 있으면 건너뛰어서 `depends on` 변경이 반영되지 않았다
+- `scripts/run.sh` — RAM 2G, `memmap=16M$0x40000000`, `-device qvenc,latency-ms=N`
+- `tests/mmio_probe.py` — rev 1.1에 맞춰 갱신. `START`가 더 이상 `ERR_UNIMPL`이 아니라
+  bus master 상태에 따라 `ERR_NO_BUS_MASTER` / `ERR_BAD_PARAM`을 낸다
+
+### 설계에서 신경 쓴 것
+- **MSI는 edge, INTx는 level.** `irq_asserted`로 직전 상태를 기억해 상태가 바뀔 때만
+  움직인다. 매번 `msi_notify()`를 부르면 인터럽트가 폭주한다
+- **bus master를 명시적으로 검사한다.** QEMU에서 BME가 꺼져 있으면 `pci_dma_read()`가
+  그냥 실패하는데, 그대로 두면 SW에는 원인이 안 보인다. `pci_set_master()` 누락은
+  드라이버 최빈 실수라 전용 에러 코드를 붙였다
+- **작업 파라미터를 START 시점에 래칭한다.** `BUSY` 중 레지스터를 바꿔도 진행 중
+  작업은 안 바뀐다. 6단계 파이프라이닝의 전제가 된다
+- **`START`가 이전 `DONE`을 치운다.** 안 그러면 ack 없이 연속 작업을 걸 때 완료
+  판정이 섞인다. 반면 `ERROR`는 치우지 않는다 — 에러는 명시적 ack를 요구한다
+- **24 MiB 프레임을 통째로 들지 않는다.** 64 KiB 청크로 끊어 옮긴다
+
+### 확인한 것 (QEMU 11.1.2 소스 대조)
+- qdev 헤더가 `include/hw/` → `include/hw/core/`로 이동했다. `include/hw` 최상위에
+  남은 파일은 `elf_ops.h.inc` 하나뿐이다
+- `pci_dma_read`/`pci_dma_write`는 `include/hw/pci/pci_device.h`에 있고 `MemTxResult`를
+  돌려준다. `pci.h`가 선언하지 않으므로 직접 include 하는 게 맞다
+- `device_class_set_props`는 `ARRAY_SIZE`로 개수를 세고, 배열 마지막 항목이 NULL이면
+  `qemu_build_not_reached()`로 **컴파일을 실패시킨다.** 종료자를 넣으면 안 된다
+  (`hw/misc/pci-testdev.c`가 같은 형태를 쓴다)
+- `device_class_set_legacy_reset`은 `include/hw/core/qdev.h:975`에 있다
+- `msi_init(dev, offset, nr_vectors, msi64bit, msi_per_vector_mask, errp)`
+- `PCI_COMMAND_MASTER`는 `0x4` (`include/standard-headers/linux/pci_regs.h`)
+- `msi_init()`을 쓰므로 Kconfig에 `depends on PCI && MSI_NONBROKEN`이 필요하다 (edu와 동일)
+
+### 검증
+- 호스트 스텁 harness를 DMA·타이머·MSI·속성·리셋까지 확장했다. 게스트 RAM은 배열로,
+  타이머는 테스트가 직접 만기를 돌리는 방식으로 흉내 낸다
+- `hw/qvenc.c`: 검사 **89개 전부 통과**, `-Wall -Wextra` 경고 없음. 확인 항목은
+  bus master 거절, 파라미터 검증 5종, `DST_SIZE` 부족, 주소 오버플로, 정상 복사,
+  64 KiB 청크를 넘는 384 KiB 전송, RAM 밖 DMA, `BUSY` 중 `START`, 파라미터 래칭,
+  INTx 레벨 동작과 전이 횟수, MSI 1회 발생, 이전 `DONE` 제거, `BUSY` 중 `RESET`,
+  버스 리셋 경로, 그리고 rev 1.0 레지스터 규칙 회귀
+- 같은 장치 로직에 검증 도구를 ctypes로 물려 끝까지 실행:
+  `mmio_probe.py` **64/64**, `dma_probe.py` **41/41**
+- `apply_qemu.sh`는 가짜 QEMU 트리에 두 번 적용해 블록이 하나만 남는 것을 확인
+- 실제 QEMU 빌드는 이 머신에 glib/pixman 개발 패키지가 없어 하지 않았다
+
+### 남은 것
+- 사용자가 빌드 → 부팅 → `mmio_probe.py` → `dma_probe.py` 순으로 확인
+- 4단계에서 `qvenc_dma_timer()`의 read와 write 사이에 JPEG 인코딩이 들어간다.
+  그때 `OUT_LEN`이 입력보다 작아지고 `DST_SIZE` 요구 조건이 완화된다 (ECO 예정)
+

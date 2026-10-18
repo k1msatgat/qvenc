@@ -21,6 +21,15 @@ BR_SRC="$QVENC_BUILD/buildroot"
 BR_IMAGES="$BR_SRC/output/images"
 BR_KDIR_GLOB="$BR_SRC/output/build/linux-*"
 
+# 장치 모델 파라미터
+QVENC_LATENCY_MS="${QVENC_LATENCY_MS:-10}"
+
+# HW 검증용 DMA 영역.
+# run.sh 가 커널에 memmap= 로 이 구간을 예약시키고, tests/dma_probe.py 가
+# /dev/mem 으로 같은 물리주소를 매핑한다. 드라이버 없이 DMA 를 시험하기 위한 것이다.
+QVENC_DMA_BASE="${QVENC_DMA_BASE:-0x40000000}"
+QVENC_DMA_SIZE_MB="${QVENC_DMA_SIZE_MB:-16}"
+
 say()  { printf '\033[1;34m[qvenc]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[qvenc]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[qvenc]\033[0m %s\n' "$*" >&2; exit 1; }

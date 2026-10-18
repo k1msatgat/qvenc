@@ -61,20 +61,22 @@
 6. 디스크립터 링, 다중 작업, 장치 처리 지연 모델링 → (SW팀) 파이프라이닝, fps 측정
 7. aarch64 게스트 추가, 드라이버 크로스컴파일
 8. (선택) 장치 안에 펌웨어 역할의 명령 큐 처리부 추가 — 호스트 → 칩 내 펌웨어 → IP 2계층 구조
+9. (선택) 디코더 IP 추가 — 지금 구조를 뒤집으면 재생 경로가 된다
 
 ## 현재 상태
-- 단계: 2 완료 (장치 골격) / 태그 `v2-skeleton`. 1단계는 `v1-env`
-- regspec rev 1.0 발행. 레지스터 14개(ID, CTRL, STATUS, IRQ_ACK, ERR_CODE,
-  SRC_LO/HI, DST_LO/HI, DST_SIZE, OUT_LEN, WIDTH, HEIGHT, QUALITY),
-  에러 코드 0x00~0x09 및 0x7F. 상세는 docs/regspec.md Change log 참조
-- 만든 것: `docs/regspec.md`, `include/qvenc_regs.h`, `hw/qvenc.c`(BAR0 MMIO만),
-  `scripts/apply_qemu.sh`, `tests/mmio_probe.py`
-- 검증: 호스트에서 QEMU 헤더를 스텁으로 두고 `hw/qvenc.c`의 레지스터 로직을
-  컴파일·실행해 81개 검사 전부 통과(경고 없음). `qvenc_regs.h`는 static_assert 통과.
-  `mmio_probe.py`도 같은 장치 로직에 ctypes로 연결해 끝까지 돌려 60/60 PASS.
-  게스트 부팅과 게스트 안에서의 `mmio_probe.py` 실행은 사용자 실행 대기
-- DMA·IRQ·인코딩은 아직 없다. `CTRL.START`는 의도적으로 `ERR_UNIMPL`을 보고한다
-- 다음 할 일: (SW팀) 드라이버 probe / (HW팀) 3단계 DMA와 IRQ — 사용자 지시 대기
+- 단계: 3 완료 (DMA와 IRQ) / 태그 `v3-dma`. 앞선 태그: `v1-env`, `v2-skeleton`
+- regspec **rev 1.1** 발행 (`ID` = `0x51000101`). 레지스터 맵은 그대로고 동작이 늘었다:
+  `CTRL.START`가 실제로 SRC→DST DMA를 수행, `STATUS.BUSY` 실동작, MSI+INTx 인터럽트,
+  입력 포맷 I420 확정, `WIDTH`/`HEIGHT` 정렬 8→**16**, `ERR_NO_BUS_MASTER`(0x0A) 신설.
+  상세는 docs/regspec.md Change log 참조
+- 만든 것: `hw/qvenc.c` rev 1.1, `tests/dma_probe.py`(신규), `apply_qemu.sh` 마커 기반 패치,
+  `run.sh`에 DMA 검증용 예약 영역과 `latency-ms` 추가
+- 검증: 호스트 스텁 harness에서 장치 로직 89개 검사 통과(`-Wall -Wextra` 경고 없음),
+  같은 로직에 `mmio_probe.py` 64/64, `dma_probe.py` 41/41 통과.
+  **실제 QEMU 빌드와 게스트 부팅은 아직 사용자 실행 대기** (1~3단계 모두 해당)
+- JPEG 인코딩은 아직 없다. rev 1.1의 `START`는 입력을 그대로 복사한다
+- 다음 할 일: (SW팀) 드라이버 probe → DMA 버퍼 → 인터럽트 핸들러 /
+  (HW팀) 4단계 JPEG 코어 — 사용자 지시 대기
 
 ## 결정 기록
 - 2026-10-18: 코덱은 JPEG baseline. H.264는 범위가 커서 제외
@@ -82,17 +84,26 @@
 - 2026-10-18: QEMU/buildroot 버전을 코드에 박지 않고 스크립트가 최신 stable 태그를
   조회한다. 재현이 필요하면 `QEMU_TAG` / `BR_TAG`로 고정
 - 2026-10-18: 모든 빌드 산출물은 `build/` 아래로 모은다 (`QVENC_BUILD`로 변경 가능)
-- 2026-10-18: 9p 마운트는 게스트 `/etc/init.d/S50qvenc9p` 오버레이로 자동화.
-  run.sh의 `mount_tag=qvenc`와 짝을 이룬다
+- 2026-10-18: 9p 마운트는 게스트 `/etc/init.d/S50qvenc9p` 오버레이로 자동화
 - 2026-10-18: `MemoryRegionOps.valid`를 1바이트·비정렬까지 열었다. QEMU가 먼저
-  걸러 버리면 장치가 `ERR_ALIGN`으로 보고할 기회가 없어 "조용한 무시"가 되기 때문
-- 2026-10-18: WIDTH/HEIGHT/QUALITY는 쓰기 시점에 검사하지 않고 `START` 시점에
-  한 번 검사한다. 조용히 클램프하면 SW가 자기 실수를 알 수 없다
+  걸러 버리면 장치가 `ERR_ALIGN`으로 보고할 기회가 없기 때문
+- 2026-10-18: WIDTH/HEIGHT/QUALITY는 쓰기 시점에 검사하지 않고 `START` 시점에 검사
 - 2026-10-18: `ERR_CODE`는 first error wins. 처음 원인을 ack 전까지 보존한다
-- 2026-10-18: rev 1.0의 `CTRL.START`는 `ERR_UNIMPL`(0x7F). 없는 기능을 성공한 척하지 않는다
 - 2026-10-18: `RESET`과 `START`가 동시에 오면 `RESET`이 이긴다
-- 2026-10-18: 장치 식별 상수는 `qvenc_regs.h` 하나만 쓴다. QEMU 장치, 드라이버,
-  `mmio_probe.py`가 모두 이 헤더를 참조한다 (probe는 헤더를 파싱해서 쓴다)
+- 2026-10-18: 장치 식별 상수는 `qvenc_regs.h` 하나만 쓴다. 검증 도구도 이 헤더를 파싱한다
+- 2026-10-18: 최종 산출물은 JPEG 비트스트림(`.jpg` / MJPEG)이다. 디코더와 플레이어는
+  범위 밖 — 재생은 기존 도구(ffplay 등)로 한다
+- 2026-10-18: 입력 프레임 포맷은 I420(YUV 4:2:0 planar), 길이는 `W*H*3/2`. stride 없음
+- 2026-10-18: `WIDTH`/`HEIGHT`를 16의 배수로 제한. 4:2:0의 JPEG MCU가 16×16이라
+  패딩·크롭 로직을 빼기 위해서다 (rev 1.0의 8의 배수에서 강화, ECO 발행)
+- 2026-10-18: bus master가 꺼진 채 `START`하면 `ERR_NO_BUS_MASTER`로 명시 보고한다.
+  드라이버에서 가장 흔한 실수인데 안 잡으면 "아무 일도 안 일어남"으로만 보인다
+- 2026-10-18: 작업 파라미터는 `START` 시점에 장치 내부로 래칭. `BUSY` 중 레지스터를
+  바꿔도 진행 중 작업은 안 바뀐다. 6단계 파이프라이닝의 전제
+- 2026-10-18: 처리 지연은 `latency-ms` 장치 속성으로 모델링(기본 10ms).
+  프레임 크기에 비례하는 제대로 된 모델은 6단계
+- 2026-10-18: DMA 검증은 드라이버 없이 한다. `memmap=`으로 물리 메모리를 예약하고
+  `/dev/mem`으로 매핑하는, 실제 칩 bring-up과 같은 방식
 
 ## 주의사항
 - QEMU 빌드에는 glib/pixman 개발 패키지가 필요하다. 없으면 configure가 실패하므로
@@ -101,7 +112,13 @@
 - 9p `security_model=mapped-xattr`는 xattr를 지원하는 파일시스템이 필요하다.
   저장소가 `/mnt/c` 같은 DrvFs 위에 있으면 `QVENC_9P_SECURITY=none`으로 띄운다
 - 드라이버가 붙지 않은 PCI 장치는 메모리 디코딩이 꺼져 있을 수 있다. 그러면 MMIO가
-  전부 `0xffffffff`로 보인다. `mmio_probe.py`는 sysfs `enable`과 COMMAND 레지스터로
-  이를 직접 켠다
+  전부 `0xffffffff`로 보인다. 검증 도구는 sysfs `enable`로 이를 직접 켠다
 - MMIO는 ctypes로 접근한다. `mmap` 슬라이싱은 memcpy를 타서 바이트 단위로 쪼개질 수
   있고, 그러면 장치가 `ERR_ALIGN`을 올린다
+- **QEMU 11에서 qdev 헤더가 `include/hw/`에서 `include/hw/core/`로 옮겨졌다.**
+  `hw/core/qdev-properties.h`가 맞는 경로다. DMA 헬퍼는 `hw/pci/pci_device.h`에 있다
+- **`Property` 배열에 종료자를 넣으면 컴파일 에러다.** `device_class_set_props`가
+  `ARRAY_SIZE`로 개수를 세고 마지막 항목이 NULL이면 빌드를 실패시킨다
+- `class_init` 시그니처는 `(ObjectClass *, const void *)`다. 옛 `void *`가 아니다
+- `run.sh`는 게스트 RAM을 2G로 띄우고 `0x40000000`에 16 MiB를 `memmap=`으로 예약한다.
+  `dma_probe.py`가 이 구간을 `/dev/mem`으로 매핑해 DMA 버퍼로 쓴다

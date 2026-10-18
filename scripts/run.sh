@@ -5,6 +5,8 @@
 #   scripts/run.sh                 # 부팅
 #   scripts/run.sh -s -S           # gdb 대기 상태로 부팅 (추가 인자는 그대로 전달)
 #
+# 환경 변수: QVENC_MEM, QVENC_LATENCY_MS, QVENC_9P_SECURITY, QVENC_DMA_BASE
+#
 # 로그인: root (비밀번호 없음)
 # 종료:   게스트에서 'poweroff', 또는 Ctrl-a x
 # 호스트 공유: /mnt/qvenc  (부팅 시 S50qvenc9p 가 자동 마운트)
@@ -15,7 +17,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 MACHINE="${QVENC_MACHINE:-pc}"
-MEM="${QVENC_MEM:-1G}"
+MEM="${QVENC_MEM:-2G}"
 SMP="${QVENC_SMP:-2}"
 SEC_MODEL="${QVENC_9P_SECURITY:-mapped-xattr}"
 QEMU_LOG="$QVENC_BUILD/qemu.log"
@@ -28,7 +30,8 @@ if ! "$QEMU_BIN" -device help 2>&1 | grep -q '"qvenc"'; then
     die "이 QEMU 에 qvenc 장치가 없다. scripts/apply_qemu.sh 실행 후 다시 빌드할 것."
 fi
 
-say "machine=$MACHINE mem=$MEM 9p=$SEC_MODEL"
+say "machine=$MACHINE mem=$MEM 9p=$SEC_MODEL latency-ms=$QVENC_LATENCY_MS"
+say "DMA 검증용 예약 영역: ${QVENC_DMA_SIZE_MB}MiB @ $QVENC_DMA_BASE"
 say "guest error 로그: $QEMU_LOG"
 say "종료는 게스트에서 poweroff, 또는 Ctrl-a x"
 
@@ -39,8 +42,8 @@ exec "$QEMU_BIN" \
     -nographic \
     -kernel "$BR_IMAGES/bzImage" \
     -drive "file=$BR_IMAGES/rootfs.ext2,if=virtio,format=raw" \
-    -append "root=/dev/vda rw rootwait console=ttyS0" \
-    -device qvenc \
+    -append "root=/dev/vda rw rootwait console=ttyS0 memmap=${QVENC_DMA_SIZE_MB}M\$${QVENC_DMA_BASE}" \
+    -device "qvenc,latency-ms=$QVENC_LATENCY_MS" \
     -fsdev "local,id=qvenc_fsdev,path=$QVENC_ROOT,security_model=$SEC_MODEL" \
     -device virtio-9p-pci,fsdev=qvenc_fsdev,mount_tag=qvenc \
     -d guest_errors \

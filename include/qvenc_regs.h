@@ -3,7 +3,7 @@
  * qvenc — QEMU 가상 JPEG 인코더 IP 레지스터 정의
  *
  * docs/regspec.md 와 1:1로 대응한다. 한쪽만 고치지 말 것.
- * 레지스터 계약 rev 1.0 / HW rev 0x0100
+ * 레지스터 계약 rev 1.1 / HW rev 0x0101
  *
  * 이 헤더는 QEMU 장치 모델, 리눅스 커널 드라이버, 유저 공간 SDK가 함께 쓴다.
  * 따라서 어떤 헤더도 include 하지 않고, 타입도 쓰지 않는다 (순수 매크로).
@@ -59,8 +59,8 @@
 #define QVENC_ID_VER_MINOR_MASK  0x000000ffu
 
 #define QVENC_ID_VER_MAJOR      0x01u
-#define QVENC_ID_VER_MINOR      0x00u
-#define QVENC_ID_VERSION        0x0100u         /* MAJOR:MINOR */
+#define QVENC_ID_VER_MINOR      0x01u
+#define QVENC_ID_VERSION        0x0101u         /* MAJOR:MINOR */
 
 /* ID 레지스터의 리셋(=고정) 값 */
 #define QVENC_ID_VALUE                                                  \
@@ -126,9 +126,10 @@
 #define QVENC_ERR_BAD_OFFSET    0x04u   /* 정의되지 않은 오프셋 */
 #define QVENC_ERR_BUSY          0x05u   /* BUSY 중 START */
 #define QVENC_ERR_RESERVED_BIT  0x06u   /* 예약 비트에 1 */
-#define QVENC_ERR_BAD_PARAM     0x07u   /* WIDTH/HEIGHT/QUALITY 범위 밖 (3단계) */
-#define QVENC_ERR_DMA_RANGE     0x08u   /* DMA 범위 초과 (3단계) */
-#define QVENC_ERR_DST_SMALL     0x09u   /* 출력이 DST_SIZE 초과 (4단계) */
+#define QVENC_ERR_BAD_PARAM     0x07u   /* WIDTH/HEIGHT/QUALITY 범위 밖 */
+#define QVENC_ERR_DMA_RANGE     0x08u   /* DMA 주소/길이가 잘못됨, 또는 접근 실패 */
+#define QVENC_ERR_DST_SMALL     0x09u   /* 출력이 DST_SIZE 초과 */
+#define QVENC_ERR_NO_BUS_MASTER 0x0au   /* Bus Master Enable 이 꺼진 채 START */
 #define QVENC_ERR_UNIMPL        0x7fu   /* 이 리비전이 구현하지 않은 기능 */
 
 /* ------------------------------------------------------------------ */
@@ -139,10 +140,33 @@
 #define QVENC_WIDTH_MAX         4096u
 #define QVENC_HEIGHT_MIN        16u
 #define QVENC_HEIGHT_MAX        4096u
-#define QVENC_DIM_ALIGN         8u      /* JPEG MCU 경계 */
+#define QVENC_DIM_ALIGN         16u     /* 4:2:0 JPEG MCU 가 16x16 이다 */
 
 #define QVENC_QUALITY_MIN       1u
 #define QVENC_QUALITY_MAX       100u
+
+/* ------------------------------------------------------------------ */
+/* 입력 프레임 포맷 — I420 (YUV 4:2:0 planar)                          */
+/*                                                                     */
+/*   0            W*H          W*H*5/4      W*H*3/2                    */
+/*   +------------+------------+------------+                          */
+/*   | Y (W x H)  | Cb (W/2 x H/2) | Cr (W/2 x H/2) |                  */
+/*   +------------+------------+------------+                          */
+/*                                                                     */
+/* 플레인 사이 패딩이나 stride 는 없다. WIDTH/HEIGHT 가 16 의 배수이므로  */
+/* 이 값은 항상 정수다. 최대 4096x4096 -> 24 MiB.                       */
+/*                                                                     */
+/* 주의: 32비트 곱셈 오버플로를 피하려면 호출 쪽에서 64비트 타입으로      */
+/* 계산할 것. (4096*4096*3/2 = 0x1800000 이라 32비트에 들어가긴 한다)    */
+/* ------------------------------------------------------------------ */
+
+#define QVENC_FRAME_BYTES(w, h) (((w) * (h) * 3u) / 2u)
+
+/* ------------------------------------------------------------------ */
+/* 장치 속성 (레지스터 아님, QEMU 커맨드라인 -device qvenc,latency-ms=N) */
+/* ------------------------------------------------------------------ */
+
+#define QVENC_LATENCY_MS_DEFAULT 10u
 
 /* ------------------------------------------------------------------ */
 /* 리셋 값                                                             */

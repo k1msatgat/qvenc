@@ -125,6 +125,33 @@ def find_device(vendor, device, bdf=None):
 
 PCI_COMMAND = 0x04
 PCI_COMMAND_MEMORY = 0x02
+PCI_COMMAND_MASTER = 0x04
+
+
+def read_command(devpath):
+    with open(os.path.join(devpath, 'config'), 'rb') as fh:
+        fh.seek(PCI_COMMAND)
+        return int.from_bytes(fh.read(2), 'little')
+
+
+def write_command(devpath, value):
+    with open(os.path.join(devpath, 'config'), 'r+b') as fh:
+        fh.seek(PCI_COMMAND)
+        fh.write((value & 0xffff).to_bytes(2, 'little'))
+
+
+def set_bus_master(devpath, enable):
+    """
+    PCI COMMAND 의 Bus Master Enable 비트를 켜고 끈다.
+
+    드라이버의 pci_set_master() 가 하는 일이다. 이 비트가 꺼져 있으면 장치가
+    DMA 를 할 수 없고, qvenc 는 그 상태의 START 를 ERR_NO_BUS_MASTER 로 거절한다.
+    """
+    cmd = read_command(devpath)
+    new = cmd | PCI_COMMAND_MASTER if enable else cmd & ~PCI_COMMAND_MASTER
+    if new != cmd:
+        write_command(devpath, new)
+    return bool(read_command(devpath) & PCI_COMMAND_MASTER)
 
 
 def ensure_memory_decode(devpath, verbose=False):
@@ -198,10 +225,11 @@ class Bar:
 # ---------------------------------------------------------------- #
 
 class Probe:
-    def __init__(self, bar, R, verbose):
+    def __init__(self, bar, R, verbose, devpath=None):
         self.bar = bar
         self.R = R
         self.verbose = verbose
+        self.devpath = devpath
         self.passed = 0
         self.failed = 0
         self.failures = []
@@ -315,17 +343,58 @@ class Probe:
         self.eq('IRQ_EN 래치됨', self.bar.r32(ctrl), self.R['QVENC_CTRL_IRQ_EN'])
         self.expect_clean('IRQ_EN 쓰기에 에러 없음')
 
-        # START 는 self-clearing 이라 0 으로 읽혀야 한다 (그리고 rev1.0 은 ERR_UNIMPL)
+        # START 는 self-clearing 이라 항상 0 으로 읽힌다
         self.bar.w32(ctrl, self.R['QVENC_CTRL_IRQ_EN'] | self.R['QVENC_CTRL_START'])
         self.eq('START 는 0 으로 읽힘', self.bar.r32(ctrl),
                 self.R['QVENC_CTRL_IRQ_EN'])
-        self.expect_err('START -> ERR_UNIMPL', 'QVENC_ERR_UNIMPL')
+        self.clear()
 
         self.bar.w32(ctrl, self.R['QVENC_CTRL_RESET'])
         self.eq('RESET 후 CTRL 은 0', self.bar.r32(ctrl), 0)
 
+    def t_start_rejects(self):
+        """
+        START 의 거절 경로만 본다. 실제 DMA 는 tests/dma_probe.py 가 맡는다.
+        검사 순서는 regspec 3.8: BUSY -> BUS_MASTER -> BAD_PARAM -> ...
+        """
+        print('\n[5] START 거절 경로')
+        ctrl = self.R['QVENC_REG_CTRL']
+        start = self.R['QVENC_CTRL_START']
+
+        if self.devpath is None:
+            print('  SKIP  PCI config 접근 불가')
+            return
+
+        # bus master 가 꺼진 상태: 파라미터를 보기도 전에 거절해야 한다
+        set_bus_master(self.devpath, False)
+        self.bar.w32(ctrl, self.R['QVENC_CTRL_RESET'])
+        self.bar.w32(ctrl, start)
+        self.expect_err('bus master 꺼짐 -> ERR_NO_BUS_MASTER',
+                        'QVENC_ERR_NO_BUS_MASTER')
+
+        # bus master 를 켜면 이제 파라미터 검사까지 간다. RESET 직후 WIDTH=0 이다.
+        set_bus_master(self.devpath, True)
+        self.bar.w32(ctrl, start)
+        self.expect_err('WIDTH=0 -> ERR_BAD_PARAM', 'QVENC_ERR_BAD_PARAM')
+
+        # 16 의 배수가 아닌 크기
+        self.bar.w32(self.R['QVENC_REG_WIDTH'], 24)
+        self.bar.w32(self.R['QVENC_REG_HEIGHT'], 64)
+        self.bar.w32(ctrl, start)
+        self.expect_err('WIDTH=24 (16배수 아님) -> ERR_BAD_PARAM',
+                        'QVENC_ERR_BAD_PARAM')
+
+        # 크기는 맞고 DST_SIZE 가 모자람
+        self.bar.w32(self.R['QVENC_REG_WIDTH'], 64)
+        self.bar.w32(self.R['QVENC_REG_DST_SIZE'], 1)
+        self.bar.w32(ctrl, start)
+        self.expect_err('DST_SIZE 부족 -> ERR_DST_SMALL', 'QVENC_ERR_DST_SMALL')
+
+        self.bar.w32(ctrl, self.R['QVENC_CTRL_RESET'])
+        self.expect_clean('RESET 으로 정리됨')
+
     def t_ro_write(self):
-        print('\n[5] 읽기 전용 위반')
+        print('\n[6] 읽기 전용 위반')
         for reg in ('ID', 'STATUS', 'OUT_LEN'):
             off = self.R['QVENC_REG_' + reg]
             before = self.bar.r32(off)
@@ -336,13 +405,13 @@ class Probe:
             self.eq('%s 값이 안 바뀜' % reg, self.bar.r32(off), before)
 
     def t_wo_read(self):
-        print('\n[6] 쓰기 전용 위반')
+        print('\n[7] 쓰기 전용 위반')
         v = self.bar.r32(self.R['QVENC_REG_IRQ_ACK'])
         self.eq('IRQ_ACK 읽기 -> 0xffffffff', v, 0xffffffff)
         self.expect_err('IRQ_ACK 읽기 -> ERR_WO_READ', 'QVENC_ERR_WO_READ')
 
     def t_bad_offset(self):
-        print('\n[7] 정의되지 않은 오프셋')
+        print('\n[8] 정의되지 않은 오프셋')
         for off in (self.R['QVENC_REG_END'], 0x100, 0xffc):
             v = self.bar.r32(off)
             self.eq('0x%03x 읽기 -> 0xffffffff' % off, v, 0xffffffff)
@@ -353,7 +422,7 @@ class Probe:
                             'QVENC_ERR_BAD_OFFSET')
 
     def t_alignment(self):
-        print('\n[8] 정렬 / 접근 폭')
+        print('\n[9] 정렬 / 접근 폭')
         self.bar.r32(0x02)      # 비정렬 32비트 읽기
         self.expect_err('비정렬 주소 0x02 -> ERR_ALIGN', 'QVENC_ERR_ALIGN')
 
@@ -368,7 +437,7 @@ class Probe:
         self.clear()
 
     def t_reserved_bits(self):
-        print('\n[9] 예약 비트')
+        print('\n[10] 예약 비트')
         ctrl = self.R['QVENC_REG_CTRL']
         self.bar.w32(ctrl, self.R['QVENC_CTRL_IRQ_EN'])
         self.clear()
@@ -384,7 +453,7 @@ class Probe:
         self.bar.w32(ctrl, self.R['QVENC_CTRL_RESET'])
 
     def t_error_sticky(self):
-        print('\n[10] ERR_CODE 는 첫 원인을 보존한다')
+        print('\n[11] ERR_CODE 는 첫 원인을 보존한다')
         self.bar.r32(self.R['QVENC_REG_IRQ_ACK'])       # 1차: ERR_WO_READ
         first = self.errcode()
         self.bar.w32(self.R['QVENC_REG_ID'], 0)         # 2차: ERR_RO_WRITE
@@ -395,7 +464,7 @@ class Probe:
         self.expect_clean('ACK_ERROR 로 에러가 지워짐')
 
     def t_reset_recovers(self):
-        print('\n[11] RESET 이 더럽힌 상태를 되돌린다')
+        print('\n[12] RESET 이 더럽힌 상태를 되돌린다')
         self.bar.w32(self.R['QVENC_REG_WIDTH'], 1920)
         self.bar.w32(self.R['QVENC_REG_HEIGHT'], 1080)
         self.bar.w32(self.R['QVENC_REG_QUALITY'], 10)
@@ -415,6 +484,7 @@ class Probe:
         self.t_reset_values()
         self.t_roundtrip()
         self.t_ctrl_bits()
+        self.t_start_rejects()
         self.t_ro_write()
         self.t_wo_read()
         self.t_bad_offset()
@@ -478,11 +548,17 @@ def main():
         print('BAR0 mmap 실패: %s' % exc, file=sys.stderr)
         return 2
 
-    probe = Probe(bar, R, args.verbose)
+    saved_cmd = read_command(devpath)
+    probe = Probe(bar, R, args.verbose, devpath)
     try:
         probe.run()
     finally:
         bar.close()
+        # PCI COMMAND 를 원래대로 돌려 둔다 (bus master 를 건드렸으므로)
+        try:
+            write_command(devpath, saved_cmd)
+        except OSError:
+            pass
 
     total = probe.passed + probe.failed
     print('\n' + '-' * 58)
