@@ -150,3 +150,67 @@ CLAUDE.md "현재 상태"는 요약만 담는다. 날짜별 상세 작업 기록
 - 4단계에서 `qvenc_dma_timer()`의 read와 write 사이에 JPEG 인코딩이 들어간다.
   그때 `OUT_LEN`이 입력보다 작아지고 `DST_SIZE` 요구 조건이 완화된다 (ECO 예정)
 
+## 2026-10-18 — 실제 QEMU 빌드와 검증 (1~3단계 통합 확인)
+
+지금까지는 스텁 harness로만 검증했다. 실제로 빌드해서 돌렸다.
+
+### 환경 우회 (이 개발 머신 한정)
+이 머신은 `sudo`에 비밀번호가 필요해 apt 설치를 할 수 없었다. root 없이 우회했다:
+
+- `apt-get download`로 .deb를 받아 `dpkg-deb -x`로 로컬 prefix에 풀었다
+  (glib/pixman/pcre2/ffi/zlib/mount/blkid/selinux/sepol/uuid/cap-ng/attr의 -dev,
+  python3-pip, python3-setuptools, cpio)
+- `PKG_CONFIG_SYSROOT_DIR` + `PKG_CONFIG_LIBDIR`로 pkg-config가 그 prefix를 보게 했다
+- 런타임 `.so`는 이미 시스템에 있어서, -dev 패키지의 끊어진 심볼릭 링크를
+  시스템 경로로 재연결했다
+- QEMU configure가 `python3 -m venv` 중 `-Im ensurepip`를 부르는데 isolated 모드라
+  `PYTHONPATH`가 안 먹는다. `mkvenv.py`는 `pip`와 `setuptools`가 `find_spec`로
+  보이면 ensurepip를 건너뛰므로, 두 패키지를 `PYTHONPATH`로 제공해 통과시켰다
+- 일부 `.pc`가 `libdir=/usr/lib`(멀티아크 아님)을 써서 `-lselinux`를 못 찾았다.
+  멀티아크 디렉터리의 `.so`를 `usr/lib`에도 링크해 해결
+
+**사용자 머신에서는 이 과정이 전부 불필요하다.** `scripts/build_qemu.sh --deps`
+한 번이면 된다. 위 내용은 이 세션의 작업 기록일 뿐이다.
+
+### 고친 것
+- `scripts/build_guest.sh`: **WSL2의 윈도우 PATH 주입 대응.** `/mnt/c/Program Files/...`
+  처럼 공백이 든 PATH 항목이 있으면 buildroot가
+  `Your PATH contains spaces, TABs, and/or newline characters`로 거부한다.
+  공백 든 항목을 걸러내도록 했다. 사용자 환경에서도 그대로 발생할 문제다
+- `tests/qtest_probe.py` 신규
+
+### 결과
+- **QEMU 11.1.2 빌드 성공.** `-device help`에
+  `name "qvenc", bus PCI, desc "qvenc virtual JPEG encoder IP"` 등록 확인.
+  `-device qvenc,help`에 `latency-ms=<uint32> (default: 10)` 노출 확인
+- `apply_qemu.sh`가 진짜 QEMU 트리에서 정상 동작. `MSI_NONBROKEN`(hw/pci/Kconfig:14),
+  `TEST_DEVICES`(hw/Kconfig:75) 모두 실재하고 x86이 `imply TEST_DEVICES` 한다
+- `hw/qvenc.c`가 **진짜 QEMU 헤더로 컴파일된다.** 스텁이 현실과 어긋나지 않았다
+- `tests/qtest_probe.py`: **55/55 PASS**
+- 심볼 전수 교차 검증: `qvenc.c`가 쓰는 QEMU 심볼 50개 전부 실재 확인,
+  `#include` 9개 전부 존재
+
+### qtest 로 확인한 것
+게스트 OS 없이 QEMU 안에서 직접 확인했다. 가상 클럭을 `clock_step`으로 돌리므로
+타이머 동작이 결정적이다.
+
+- PCI 열거: vendor:device `1234:5100`, class `0x0400`, revision `0x01`
+- BAR0: 전부 1을 써서 되읽은 크기가 정확히 4 KiB, 32비트 non-prefetchable
+- 레지스터: `ID` = `0x51000101`, `QUALITY` 리셋 75, 왕복, 쓰기 시 무검사
+- 접근 규칙 위반 6종이 전부 올바른 `ERR_CODE`로 보고됨.
+  **16비트/64비트 접근이 실제로 장치까지 도달해 `ERR_ALIGN`이 난다** —
+  게스트 테스트에서는 CPU가 쪼갤 수 있어 INFO로 남겼던 항목이 여기서는 확정됐다
+- bus master: PCI COMMAND로 실제로 껐다 켜며 `ERR_NO_BUS_MASTER` 확인
+- **실제 DMA**: 6 KiB와 384 KiB(64 KiB 청크를 넘김) 전송 후 게스트 RAM 바이트 비교 일치.
+  5 ms 시점엔 `BUSY`, 15 ms 시점엔 `DONE` — `latency-ms=10`이 정확히 동작
+- RAM 밖 주소(508 GiB) DMA가 `ERR_DMA_RANGE`로 보고됨.
+  QEMU가 `MEMTX_OK`로 조용히 넘기지 않는다는 것을 실측으로 확인했다
+- `BUSY` 중 `START` → `ERR_BUSY`, 원래 작업은 영향 없이 완료
+- 파라미터 래칭, `BUSY` 중 `RESET`(타이머 취소 포함) 확인
+- MSI capability가 config space offset `0x40`에 있고 64비트 주소, 벡터 1개
+- 장치의 guest-error 로그 11줄이 `-d guest_errors`로 실제 출력됨
+
+### 남은 것
+- buildroot 게스트 빌드 진행 중. 끝나면 부팅 → `mmio_probe.py` → `dma_probe.py`로
+  게스트 환경(sysfs, `/dev/mem`, 9p)까지 확인한다
+

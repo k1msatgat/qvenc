@@ -39,6 +39,31 @@ fi
 need git
 need make
 
+# WSL2 는 윈도우의 PATH 를 그대로 합쳐 넣는다. 거기엔 "/mnt/c/Program Files/..." 처럼
+# 공백이 들어간 항목이 있고, buildroot 는 공백이 있는 PATH 를 아예 거부한다
+# ("Your PATH contains spaces, TABs, and/or newline characters").
+# 빌드에 필요 없는 항목들이므로 걸러낸다.
+sanitize_path() {
+    local cleaned="" entry
+    local OLD_IFS="$IFS"
+    IFS=:
+    for entry in $PATH; do
+        case "$entry" in
+            ''|*[[:space:]]*) continue ;;
+        esac
+        cleaned="${cleaned:+$cleaned:}$entry"
+    done
+    IFS="$OLD_IFS"
+    printf '%s' "$cleaned"
+}
+
+clean_path="$(sanitize_path)"
+if [ "$clean_path" != "$PATH" ]; then
+    say "PATH 에 공백이 든 항목이 있어 걸러낸다 (WSL2 의 윈도우 PATH 주입)"
+    export PATH="$clean_path"
+fi
+need gcc
+
 if [ -z "$BR_TAG" ]; then
     say "최신 buildroot stable 태그 조회 중..."
     BR_TAG="$(latest_tag "$BR_GIT" '^[0-9]{4}\.[0-9]{2}\.[0-9]+$')"

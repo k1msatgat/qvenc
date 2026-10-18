@@ -72,6 +72,20 @@ python3 /mnt/qvenc/tests/dma_probe.py      # DMA 와 인터럽트 상태 비트
 - `dma_probe.py` — `run.sh`가 `memmap=`으로 예약해 둔 물리 메모리를 `/dev/mem`으로
   매핑해 DMA 버퍼로 쓴다. 실제 칩 bring-up에서 드라이버보다 먼저 하는 일과 같다
 
+## 게스트 없이 빠르게 검증하기
+
+장치만 고쳤다면 게스트를 띄울 필요가 없다. 호스트에서 바로:
+
+```sh
+ninja -C build/qemu/build qemu-system-x86_64
+python3 tests/qtest_probe.py
+```
+
+`qtest_probe.py`는 QEMU의 qtest accel로 띄워 소켓으로 MMIO·PCI config·게스트 RAM을
+직접 두드린다. 게스트 OS가 없으니 몇 초면 끝나고, 가상 클럭을 직접 돌리므로
+지연 타이머 동작도 결정적으로 재현된다. BAR를 손으로 배치하거나 bus master를 껐다
+켜는 것처럼 게스트 안에서는 하기 번거로운 것도 여기서는 쉽다.
+
 처리 지연을 바꿔서 `BUSY` 경로를 길게 보고 싶으면:
 
 ```sh

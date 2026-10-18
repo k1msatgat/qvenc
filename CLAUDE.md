@@ -71,9 +71,12 @@
   상세는 docs/regspec.md Change log 참조
 - 만든 것: `hw/qvenc.c` rev 1.1, `tests/dma_probe.py`(신규), `apply_qemu.sh` 마커 기반 패치,
   `run.sh`에 DMA 검증용 예약 영역과 `latency-ms` 추가
-- 검증: 호스트 스텁 harness에서 장치 로직 89개 검사 통과(`-Wall -Wextra` 경고 없음),
-  같은 로직에 `mmio_probe.py` 64/64, `dma_probe.py` 41/41 통과.
-  **실제 QEMU 빌드와 게스트 부팅은 아직 사용자 실행 대기** (1~3단계 모두 해당)
+- 검증: **QEMU 11.1.2를 실제로 빌드해 `-device qvenc` 등록 확인**,
+  `tests/qtest_probe.py`로 실제 QEMU 안에서 55/55 통과 (PCI 열거, BAR 배치, 레지스터,
+  접근 규칙 위반, bus master, 실제 DMA 6 KiB·384 KiB, RAM 밖 DMA, BUSY, 래칭,
+  RESET, MSI capability, guest-error 로그).
+  호스트 스텁 harness 89개 검사, `mmio_probe.py` 64/64, `dma_probe.py` 41/41도 통과.
+  게스트 부팅 검증은 buildroot 빌드 후
 - JPEG 인코딩은 아직 없다. rev 1.1의 `START`는 입력을 그대로 복사한다
 - 다음 할 일: (SW팀) 드라이버 probe → DMA 버퍼 → 인터럽트 핸들러 /
   (HW팀) 4단계 JPEG 코어 — 사용자 지시 대기
@@ -125,3 +128,9 @@
 - `class_init` 시그니처는 `(ObjectClass *, const void *)`다. 옛 `void *`가 아니다
 - `run.sh`는 게스트 RAM을 2G로 띄우고 `0x40000000`에 16 MiB를 `memmap=`으로 예약한다.
   `dma_probe.py`가 이 구간을 `/dev/mem`으로 매핑해 DMA 버퍼로 쓴다
+- **WSL2는 윈도우 PATH를 그대로 합쳐 넣는데 거기엔 `/mnt/c/Program Files/...`처럼 공백이
+  든 항목이 있다. buildroot는 공백이 있는 PATH를 거부한다**
+  (`Your PATH contains spaces, TABs, and/or newline characters`).
+  `build_guest.sh`가 공백 든 항목을 걸러내므로 따로 할 일은 없다
+- 장치만 고쳤을 때는 게스트를 띄울 필요 없이 QEMU만 재빌드하고
+  `python3 tests/qtest_probe.py`를 돌리는 게 가장 빠르다 (몇 초)
